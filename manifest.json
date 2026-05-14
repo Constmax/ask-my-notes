@@ -1,0 +1,10 @@
+{
+  "id": "ask-my-notes",
+  "name": "Ask My Notes",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Chat with your vault using DeepSeek AI and RAG.",
+  "author": "Constantin Janz",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}
