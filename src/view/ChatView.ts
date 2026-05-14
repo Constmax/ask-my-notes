@@ -14,6 +14,16 @@ import type { Workflow } from "../llm/workflows";
 
 export const VIEW_TYPE = "ask-my-notes-chat";
 
+const TOOL_LABELS: Record<string, string> = {
+  search_notes: "Suche Notizen",
+  read_note: "Lese Notiz",
+  list_notes: "Alle Notizen auflisten",
+  get_active_note: "Aktive Notiz lesen",
+  write_note: "Schreibe Notiz",
+  append_to_note: "Ergänze Notiz",
+  move_note: "Verschiebe Notiz",
+};
+
 const EFFORT_LEVELS: { label: string; budget: number }[] = [
   { label: "Fast", budget: 1024 },
   { label: "Normal", budget: 4096 },
@@ -86,6 +96,18 @@ export class ChatView extends ItemView {
 
     this.messagesEl = root.createDiv("ask-my-notes-messages");
     this.renderEmpty();
+
+    this.messagesEl.addEventListener("click", (e) => {
+      const link = (e.target as HTMLElement).closest("a.internal-link") as HTMLAnchorElement | null;
+      if (!link) return;
+      e.preventDefault();
+      const href = link.dataset.href ?? link.getAttribute("href");
+      if (!href) return;
+      const file = this.app.metadataCache.getFirstLinkpathDest(href, "");
+      if (file instanceof TFile) {
+        this.app.workspace.getLeaf(false).openFile(file);
+      }
+    });
 
     const inputArea = root.createDiv("ask-my-notes-input-area");
 
@@ -472,6 +494,10 @@ export class ChatView extends ItemView {
             bubbleEl.textContent = fullText;
             this.scrollToBottom();
           },
+          onThinking: (content, _step) => {
+            this.renderThinkingStep(stepsEl, content);
+            this.scrollToBottom();
+          },
           onToolCall: (name, args, step) => {
             const controls = this.renderToolStep(stepsEl, name, args);
             stepEls.set(step, controls);
@@ -545,6 +571,73 @@ export class ChatView extends ItemView {
 
   // ── Tool step rendering ────────────────────────────────────────────────────
 
+  private renderThinkingStep(container: HTMLElement, content: string): void {
+    const stepEl = container.createDiv("ask-my-notes-step is-thinking");
+
+    const headerEl = stepEl.createDiv({
+      cls: "ask-my-notes-step-header is-thinking",
+      text: "💭 Denken…",
+    });
+
+    const bodyEl = stepEl.createDiv("ask-my-notes-step-body");
+    bodyEl.createDiv({ cls: "ask-my-notes-step-thinking-content", text: content });
+
+    headerEl.addEventListener("click", () => {
+      const collapsed = bodyEl.style.display === "none";
+      bodyEl.style.display = collapsed ? "block" : "none";
+    });
+  }
+
+  private getToolKeyArg(name: string, args: Record<string, unknown>): string {
+    switch (name) {
+      case "search_notes": return String(args.query ?? "");
+      case "read_note": return String(args.path ?? "");
+      case "write_note": return String(args.path ?? "");
+      case "append_to_note": return String(args.path ?? "");
+      case "move_note": return `${args.from} → ${args.to}`;
+      default: return "";
+    }
+  }
+
+  private formatToolResultText(name: string, result: unknown): string {
+    const r = result as Record<string, unknown>;
+    if (r.error) return `Fehler: ${r.error as string}`;
+
+    switch (name) {
+      case "search_notes": {
+        const results = (r.results as { filePath: string; headingPath?: string }[]) ?? [];
+        if (results.length === 0) return "Keine Treffer gefunden.";
+        return results
+          .map((c) => (c.headingPath ? `${c.filePath} › ${c.headingPath}` : c.filePath))
+          .join("\n");
+      }
+      case "read_note": {
+        const content = (r.content as string) ?? "";
+        return content.slice(0, 500) + (content.length > 500 ? "\n…" : "");
+      }
+      case "list_notes": {
+        const paths = (r.paths as string[]) ?? [];
+        const total = (r.total as number) ?? paths.length;
+        const list = paths.join("\n");
+        return total > paths.length ? `${list}\n… (${total} gesamt)` : list;
+      }
+      case "get_active_note": {
+        const content = (r.content as string) ?? "";
+        return `${r.path}\n\n${content.slice(0, 300)}${content.length > 300 ? "\n…" : ""}`;
+      }
+      case "write_note": {
+        const verb = r.created ? "Erstellt" : "Aktualisiert";
+        return `${verb}: ${r.path} (${r.bytes} Zeichen)`;
+      }
+      case "append_to_note":
+        return `Ergänzt: ${r.path} (+${r.appended} Zeichen)`;
+      case "move_note":
+        return `Verschoben: ${r.from} → ${r.to}`;
+      default:
+        return JSON.stringify(result, null, 2);
+    }
+  }
+
   private renderToolStep(
     container: HTMLElement,
     name: string,
@@ -552,10 +645,13 @@ export class ChatView extends ItemView {
   ): { markDone: (result: unknown) => void } {
     const stepEl = container.createDiv("ask-my-notes-step");
 
-    const argsPreview = this.formatArgsPreview(args);
+    const label = TOOL_LABELS[name] ?? name;
+    const keyArg = this.getToolKeyArg(name, args);
+    const headerText = keyArg ? `${label} — "${keyArg}"` : label;
+
     const headerEl = stepEl.createDiv({
       cls: "ask-my-notes-step-header is-running",
-      text: `⚙ ${name}(${argsPreview})`,
+      text: `⚙ ${headerText}`,
     });
 
     const bodyEl = stepEl.createDiv("ask-my-notes-step-body");
@@ -569,12 +665,10 @@ export class ChatView extends ItemView {
     const markDone = (result: unknown): void => {
       headerEl.removeClass("is-running");
       headerEl.addClass("is-done");
-      headerEl.textContent = `✓ ${name}(${argsPreview})`;
-
-      const resultStr = JSON.stringify(result, null, 2);
-      bodyEl.createEl("pre", {
-        cls: "ask-my-notes-step-result",
-        text: resultStr.length > 1000 ? resultStr.slice(0, 1000) + "\n…" : resultStr,
+      headerEl.textContent = `✓ ${headerText}`;
+      bodyEl.createDiv({
+        cls: "ask-my-notes-step-result-text",
+        text: this.formatToolResultText(name, result),
       });
     };
 
