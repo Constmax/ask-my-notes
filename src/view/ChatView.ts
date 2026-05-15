@@ -363,7 +363,7 @@ export class ChatView extends ItemView {
     this.messagesEl.empty();
     this.messagesEl.createDiv({
       cls: "ask-my-notes-empty",
-      text: "Ask anything about your notes. Use the command palette to reindex when your vault changes.",
+      text: "Ask anything about your notes.\nType / to run a workflow.",
     });
   }
 

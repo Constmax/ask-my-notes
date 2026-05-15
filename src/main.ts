@@ -47,8 +47,6 @@ export default class AskMyNotesPlugin extends Plugin {
     );
 
     this.addSettingTab(new AskMyNotesSettingTab(this.app, this));
-
-    this.app.workspace.onLayoutReady(() => this.activateChatView());
   }
 
   onunload(): void {

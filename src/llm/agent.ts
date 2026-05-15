@@ -6,6 +6,7 @@ import type { RetrievedChunk } from "../rag/retriever";
 
 export interface AgentCallbacks {
   onToken: (token: string) => void;
+  onThinking: (content: string, step: number) => void;
   onToolCall: (name: string, args: Record<string, unknown>, step: number) => void;
   onToolResult: (
     name: string,
@@ -67,6 +68,10 @@ export async function runAgent(
 
     if (finishReason !== "tool_calls" || toolCalls.length === 0) {
       break;
+    }
+
+    if (reasoningContent) {
+      callbacks.onThinking(reasoningContent, step);
     }
 
     // Push assistant message with tool_calls into the running context
