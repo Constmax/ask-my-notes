@@ -228,7 +228,13 @@ export class ChatView extends ItemView {
       cls: "ask-my-notes-send-btn",
       text: "Send",
     });
-    this.sendBtn.addEventListener("click", () => this.submit());
+    this.sendBtn.addEventListener("click", () => {
+      if (this.abortController) {
+        this.abortController.abort();
+      } else {
+        void this.submit();
+      }
+    });
 
     this.updateStatus();
   }
@@ -396,9 +402,7 @@ export class ChatView extends ItemView {
     const bubbleEl = assistantMsg.querySelector(".ask-my-notes-bubble") as HTMLElement;
 
     this.abortController = new AbortController();
-    this.sendBtn.disabled = true;
     this.sendBtn.textContent = "Stop";
-    this.sendBtn.onclick = () => this.abortController?.abort();
 
     try {
       if (useAgent) {
@@ -408,9 +412,7 @@ export class ChatView extends ItemView {
       }
     } finally {
       this.abortController = null;
-      this.sendBtn.disabled = false;
       this.sendBtn.textContent = "Send";
-      this.sendBtn.onclick = () => this.submit();
     }
   }
 
