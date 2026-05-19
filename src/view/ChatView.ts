@@ -439,7 +439,7 @@ export class ChatView extends ItemView {
       const messages = buildMessages(this.history, query, chunks);
       const client = new DeepSeekClient(deepseekKey, this.activeModel);
 
-      await client.chat(
+      const reasoningContent = await client.chat(
         messages,
         (token) => {
           fullText += token;
@@ -454,7 +454,11 @@ export class ChatView extends ItemView {
       this.scrollToBottom();
 
       this.history.push({ role: "user", content: query });
-      this.history.push({ role: "assistant", content: fullText });
+      this.history.push({
+        role: "assistant",
+        content: fullText,
+        ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+      });
 
       if (chunks.length > 0) {
         this.renderSources(assistantMsg, chunks);

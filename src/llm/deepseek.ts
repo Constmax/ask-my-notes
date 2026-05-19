@@ -28,8 +28,9 @@ export class DeepSeekClient {
     onToken: (token: string) => void,
     signal?: AbortSignal,
     options?: ChatOptions
-  ): Promise<void> {
-    await this.chatWithTools(messages, [], onToken, signal, options);
+  ): Promise<string> {
+    const result = await this.chatWithTools(messages, [], onToken, signal, options);
+    return result.reasoningContent;
   }
 
   async chatWithTools(
@@ -39,11 +40,21 @@ export class DeepSeekClient {
     signal?: AbortSignal,
     options?: ChatOptions
   ): Promise<ChatWithToolsResult> {
+    const thinkingEnabled =
+      this.model === "deepseek-v4-pro" && options?.thinkingBudget != null;
+
+    // Tool-calling rounds must leave room for write_note, whose full file
+    // content is emitted as JSON arguments. When thinking is enabled,
+    // reasoning_content also counts against max_tokens, so it must exceed
+    // the thinking budget or the model is cut off mid-reasoning.
+    const outputBudget = 8192;
     const body: Record<string, unknown> = {
       model: this.model,
       messages,
       stream: true,
-      max_tokens: tools.length > 0 ? 1024 : 8192,
+      max_tokens: thinkingEnabled
+        ? outputBudget + (options!.thinkingBudget as number)
+        : outputBudget,
     };
 
     if (tools.length > 0) {
@@ -51,8 +62,8 @@ export class DeepSeekClient {
       body.tool_choice = "auto";
     }
 
-    if (this.model === "deepseek-v4-pro" && options?.thinkingBudget != null) {
-      body.thinking = { type: "enabled", budget_tokens: options.thinkingBudget };
+    if (thinkingEnabled) {
+      body.thinking = { type: "enabled", budget_tokens: options!.thinkingBudget };
     }
 
     const response = await fetch(`${BASE_URL}/chat/completions`, {
