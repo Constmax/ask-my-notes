@@ -45,19 +45,15 @@ export class ChatView extends ItemView {
   private inputEl!: HTMLTextAreaElement;
   private sendBtn!: HTMLButtonElement;
   private statusEl!: HTMLElement;
-  private effortRow!: HTMLElement;
 
   private activeModel!: DeepSeekModel;
   private thinkingBudget = 4096;
   private agentMode = false;
   private writeConfirm = true;
-  private modelBtns = new Map<DeepSeekModel, HTMLButtonElement>();
-  private effortBtns = new Map<number, HTMLButtonElement>();
-  private chatModeBtn!: HTMLButtonElement;
-  private agentModeBtn!: HTMLButtonElement;
-  private writeConfirmGroup!: HTMLElement;
-  private writeAutoBtn!: HTMLButtonElement;
-  private writeConfirmBtn!: HTMLButtonElement;
+  private dropdownSyncs: (() => void)[] = [];
+  private dropdownMenus: HTMLElement[] = [];
+  private effortDropdownEl!: HTMLElement;
+  private writeDropdownEl!: HTMLElement;
 
   private abortController: AbortController | null = null;
 
@@ -114,48 +110,46 @@ export class ChatView extends ItemView {
     // ── Toolbar ─────────────────────────────────────────────────────────────
     const toolbar = inputArea.createDiv("ask-my-notes-toolbar");
 
-    // Model buttons
-    const modelGroup = toolbar.createDiv("ask-my-notes-btn-group");
-    for (const model of ["deepseek-v4-flash", "deepseek-v4-pro"] as DeepSeekModel[]) {
-      const label = model === "deepseek-v4-flash" ? "Flash" : "Pro";
-      const btn = modelGroup.createEl("button", { cls: "ask-my-notes-toggle-btn", text: label });
-      this.modelBtns.set(model, btn);
-      btn.addEventListener("click", () => this.setModel(model));
-    }
+    this.createDropdown<DeepSeekModel>(
+      toolbar,
+      "Modell",
+      [
+        { label: "Flash", value: "deepseek-v4-flash" },
+        { label: "Pro", value: "deepseek-v4-pro" },
+      ],
+      () => this.activeModel,
+      (v) => this.setModel(v)
+    );
 
-    // Effort buttons (Pro only)
-    this.effortRow = toolbar.createDiv("ask-my-notes-btn-group ask-my-notes-effort-group");
-    for (const { label, budget } of EFFORT_LEVELS) {
-      const btn = this.effortRow.createEl("button", { cls: "ask-my-notes-toggle-btn", text: label });
-      this.effortBtns.set(budget, btn);
-      btn.addEventListener("click", () => this.setEffort(budget));
-    }
+    this.effortDropdownEl = this.createDropdown<number>(
+      toolbar,
+      "Aufwand",
+      EFFORT_LEVELS.map((e) => ({ label: e.label, value: e.budget })),
+      () => this.thinkingBudget,
+      (v) => this.setEffort(v)
+    );
 
-    // Mode buttons (Chat / Agent)
-    const modeGroup = toolbar.createDiv("ask-my-notes-btn-group");
-    this.chatModeBtn = modeGroup.createEl("button", {
-      cls: "ask-my-notes-toggle-btn",
-      text: "Chat",
-    });
-    this.agentModeBtn = modeGroup.createEl("button", {
-      cls: "ask-my-notes-toggle-btn",
-      text: "Agent",
-    });
-    this.chatModeBtn.addEventListener("click", () => this.setAgentMode(false));
-    this.agentModeBtn.addEventListener("click", () => this.setAgentMode(true));
+    this.createDropdown<boolean>(
+      toolbar,
+      "Modus",
+      [
+        { label: "Chat", value: false },
+        { label: "Agent", value: true },
+      ],
+      () => this.agentMode,
+      (v) => void this.setAgentMode(v)
+    );
 
-    // Write-confirm toggle (only visible in agent mode)
-    this.writeConfirmGroup = toolbar.createDiv("ask-my-notes-btn-group");
-    this.writeAutoBtn = this.writeConfirmGroup.createEl("button", {
-      cls: "ask-my-notes-toggle-btn",
-      text: "Auto",
-    });
-    this.writeConfirmBtn = this.writeConfirmGroup.createEl("button", {
-      cls: "ask-my-notes-toggle-btn",
-      text: "Bestätigen",
-    });
-    this.writeAutoBtn.addEventListener("click", () => this.setWriteConfirm(false));
-    this.writeConfirmBtn.addEventListener("click", () => this.setWriteConfirm(true));
+    this.writeDropdownEl = this.createDropdown<boolean>(
+      toolbar,
+      "Schreiben",
+      [
+        { label: "Auto", value: false },
+        { label: "Bestätigen", value: true },
+      ],
+      () => this.writeConfirm,
+      (v) => void this.setWriteConfirm(v)
+    );
 
     // New chat button
     const newChatBtn = toolbar.createEl("button", {
@@ -164,6 +158,11 @@ export class ChatView extends ItemView {
     });
     setIcon(newChatBtn, "rotate-ccw");
     newChatBtn.addEventListener("click", () => this.clearChat());
+
+    this.registerDomEvent(document, "click", () => this.closeAllDropdowns());
+    this.registerDomEvent(document, "keydown", (e) => {
+      if (e.key === "Escape") this.closeAllDropdowns();
+    });
 
     this.syncToolbar();
 
@@ -333,20 +332,61 @@ export class ChatView extends ItemView {
     this.syncToolbar();
   }
 
+  private createDropdown<T>(
+    parent: HTMLElement,
+    label: string,
+    options: { label: string; value: T }[],
+    getCurrent: () => T,
+    onSelect: (value: T) => void
+  ): HTMLElement {
+    const root = parent.createDiv("ask-my-notes-dropdown");
+    const trigger = root.createEl("button", { cls: "ask-my-notes-dropdown-trigger" });
+    const menu = root.createDiv("ask-my-notes-dropdown-menu");
+    menu.style.display = "none";
+
+    const items: HTMLElement[] = [];
+    options.forEach((o) => {
+      const item = menu.createDiv({ cls: "ask-my-notes-dropdown-item", text: o.label });
+      items.push(item);
+      item.addEventListener("click", (e) => {
+        e.stopPropagation();
+        menu.style.display = "none";
+        onSelect(o.value);
+        this.syncToolbar();
+      });
+    });
+
+    const sync = (): void => {
+      const current = getCurrent();
+      const active = options.find((o) => o.value === current);
+      trigger.textContent = `${label}: ${active?.label ?? "?"} ▾`;
+      items.forEach((item, i) =>
+        item.toggleClass("is-active", options[i].value === current)
+      );
+    };
+
+    trigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const isOpen = menu.style.display !== "none";
+      this.closeAllDropdowns();
+      menu.style.display = isOpen ? "none" : "block";
+    });
+
+    this.dropdownSyncs.push(sync);
+    this.dropdownMenus.push(menu);
+    sync();
+    return root;
+  }
+
+  private closeAllDropdowns(): void {
+    for (const menu of this.dropdownMenus) menu.style.display = "none";
+  }
+
   private syncToolbar(): void {
-    for (const [model, btn] of this.modelBtns) {
-      btn.toggleClass("is-active", model === this.activeModel);
-    }
     const isReasoner = this.activeModel === "deepseek-v4-pro";
-    this.effortRow.style.display = isReasoner ? "" : "none";
-    for (const [budget, btn] of this.effortBtns) {
-      btn.toggleClass("is-active", budget === this.thinkingBudget);
-    }
-    this.chatModeBtn?.toggleClass("is-active", !this.agentMode);
-    this.agentModeBtn?.toggleClass("is-active", this.agentMode);
-    this.writeConfirmGroup.style.display = this.agentMode ? "" : "none";
-    this.writeAutoBtn?.toggleClass("is-active", !this.writeConfirm);
-    this.writeConfirmBtn?.toggleClass("is-active", this.writeConfirm);
+    this.effortDropdownEl.style.display = isReasoner ? "" : "none";
+    this.writeDropdownEl.style.display = this.agentMode ? "" : "none";
+    for (const sync of this.dropdownSyncs) sync();
   }
 
   async onClose(): Promise<void> {
